@@ -53,9 +53,7 @@ jobs:
       # ======== СОХРАНЕНИЕ ОРИГИНАЛЬНЫХ ФАЙЛОВ ========
       - name: Copy original app.asar (from EXE)
         run: |
-          # Создаём папку если нет
           New-Item -ItemType Directory -Force -Path "builds\patched"
-          # Копируем оригинальный app.asar
           Copy-Item -Path "${{ github.workspace }}\App64Extracted\resources\app.asar" -Destination "builds\patched\app.asar"
         shell: powershell
 
@@ -67,19 +65,28 @@ jobs:
           }
         shell: powershell
 
-      # ======== ПАТЧИНГ ========
-      - name: Run toolset.js on app.asar to create devtools version
+      # ======== ИЗВЛЕЧЕНИЕ БИЛДА ========
+      - name: Extract build from app.asar
         run: |
           $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
-          node toolset.js extract -bp --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
-          
-          # Копируем созданный патченный файл с новым именем
-          $patchedAsar = Get-ChildItem "builds" -Filter "app.asar" -Recurse | Where-Object { $_.DirectoryName -like "*patched*" } | Select-Object -First 1
-          if ($patchedAsar) {
-            Copy-Item -Path $patchedAsar.FullName -Destination "builds\patched\appDevTools.asar"
-          } else {
-            Write-Error "Patched app.asar not found!"
-          }
+          # Извлекаем без патчей (чистый билд)
+          node toolset.js extract --extractType="customAsar" --src="$asarPath"
+        shell: powershell
+
+      # ======== СОЗДАНИЕ ПАТЧЕНОГО APP.ASAR (без DevTools) ========
+      - name: Build patched app.asar (without DevTools)
+        run: |
+          # Собираем из извлечённого билда в asar
+          node toolset.js build --lastExtracted --dest="builds\patched\app_patched.asar"
+        shell: powershell
+
+      # ======== СОЗДАНИЕ APPDEVTOOLS.ASAR (с DevTools) ========
+      - name: Create appDevTools.asar (with DevTools)
+        run: |
+          # Патчим извлечённый билд для DevTools
+          node toolset.js patch
+          # Собираем патченный билд в asar
+          node toolset.js build --lastExtracted --dest="builds\patched\appDevTools.asar"
         shell: powershell
 
       # ======== СЖАТИЕ ФАЙЛОВ ========
@@ -91,7 +98,8 @@ jobs:
         run: |
           # Сжимаем оригинальный app.asar
           7z a -tgzip "builds\patched\app.asar.gz" "builds\patched\app.asar"
-          
+          # Сжимаем patched app.asar (без DevTools)
+          7z a -tgzip "builds\patched\app_patched.asar.gz" "builds\patched\app_patched.asar"
           # Сжимаем appDevTools.asar
           7z a -tgzip "builds\patched\appDevTools.asar.gz" "builds\patched\appDevTools.asar"
         shell: powershell
@@ -100,6 +108,8 @@ jobs:
         run: |
           # Создаём .zst версию оригинального asar
           zstd -11 "builds\patched\app.asar" -o "builds\patched\app.asar.zst"
+          # И для patched версии тоже
+          zstd -11 "builds\patched\app_patched.asar" -o "builds\patched\app_patched.asar.zst"
         shell: powershell
 
       - name: Determine release tag
@@ -125,6 +135,9 @@ jobs:
             builds/patched/app.asar.gz
             builds/patched/app.asar.zst
             builds/patched/app.asar.unpacked.zip
+            builds/patched/app_patched.asar
+            builds/patched/app_patched.asar.gz
+            builds/patched/app_patched.asar.zst
             builds/patched/appDevTools.asar
             builds/patched/appDevTools.asar.gz
         env:
