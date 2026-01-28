@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'  # Повышаем для Vite
+          node-version: '20'
 
       - name: Install dependencies
         run: npm install
@@ -50,79 +50,47 @@ jobs:
         run: 7z x 'YandexMusicExtracted\$PLUGINSDIR\app-64.7z' -oApp64Extracted -y
         shell: powershell
 
-      # ======== СОХРАНЕНИЕ ОРИГИНАЛЬНЫХ ФАЙЛОВ ========
-      - name: Save original files
+      # ======== СОЗДАНИЕ APP.ASAR (без DevTools) ========
+      - name: Create app.asar (no DevTools)
         run: |
-          New-Item -ItemType Directory -Force -Path "builds\patched"
-          
-          # Копируем оригинальный app.asar
-          Copy-Item -Path "${{ github.workspace }}\App64Extracted\resources\app.asar" -Destination "builds\patched\app.asar"
-          
-          # Создаём app.asar.unpacked.zip
+          $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
+          # Извлекаем и собираем без патчей
+          node toolset.js extract --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
+          node toolset.js build -r --dest="builds\patched\app.asar"
+        shell: powershell
+
+      # ======== СОЗДАНИЕ APPDEVTOOLS.ASAR (с DevTools) ========
+      - name: Create appDevTools.asar (with DevTools)
+        run: |
+          $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
+          # Извлекаем, патчим, собираем
+          node toolset.js extract --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
+          node toolset.js patch
+          node toolset.js build --dest="builds\patched\appDevTools.asar"
+        shell: powershell
+
+      # ======== СОЗДАНИЕ APP.ASAR.UNPACKED.ZIP ========
+      - name: Create app.asar.unpacked.zip
+        run: |
           $unpackedPath = "${{ github.workspace }}\App64Extracted\resources\app.asar.unpacked"
           if (Test-Path $unpackedPath) {
             7z a -tzip "builds\patched\app.asar.unpacked.zip" "$unpackedPath\*"
           }
         shell: powershell
 
-      # ======== ВЕРСИЯ 1: ПОЛНЫЙ БИЛД (без DevTools) ========
-      - name: Extract for full build
-        run: |
-          $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
-          # Извлекаем БЕЗ флага -p (без патчей)
-          node toolset.js extract --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
-        shell: powershell
-
-      - name: Build full version (no DevTools)
-        run: |
-          # Копируем извлечённый билд для сохранения
-          Copy-Item -Path "extracted\*" -Destination "extracted_full" -Recurse -Force
-          
-          # Собираем БЕЗ патчей
-          node toolset.js build --lastExtracted --dest="builds\patched\app_full.asar"
-        shell: powershell
-
-      # ======== ВЕРСИЯ 2: DEVTOOLS БИЛД ========
-      - name: Extract for DevTools build
-        run: |
-          $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
-          # Извлекаем снова для DevTools версии
-          node toolset.js extract --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
-        shell: powershell
-
-      - name: Patch for DevTools
-        run: |
-          # Применяем патчи DevTools
-          node toolset.js patch
-        shell: powershell
-
-      - name: Build DevTools version
-        run: |
-          # Собираем с патчами
-          node toolset.js build --lastExtracted --dest="builds\patched\app_devtools.asar"
-        shell: powershell
-
-      # ======== СЖАТИЕ ФАЙЛОВ ========
+      # ======== СОЗДАНИЕ СЖАТЫХ ВЕРСИЙ ========
       - name: Install zstd
         run: choco install zstandard -y
         shell: powershell
 
-      - name: Gzip all asar files
+      - name: Create compressed files
         run: |
-          # Оригинальный
+          # app.asar.gz
           7z a -tgzip "builds\patched\app.asar.gz" "builds\patched\app.asar"
-          # Полная версия (без DevTools)
-          7z a -tgzip "builds\patched\app_full.asar.gz" "builds\patched\app_full.asar"
-          # DevTools версия
-          7z a -tgzip "builds\patched\app_devtools.asar.gz" "builds\patched\app_devtools.asar"
-        shell: powershell
-
-      - name: Create zstd compressed files
-        run: |
-          # Оригинальный
+          # appDevTools.asar.gz
+          7z a -tgzip "builds\patched\appDevTools.asar.gz" "builds\patched\appDevTools.asar"
+          # app.asar.zst
           zstd -11 "builds\patched\app.asar" -o "builds\patched\app.asar.zst"
-          # Полная версия
-          zstd -11 "builds\patched\app_full.asar" -o "builds\patched\app_full.asar.zst"
         shell: powershell
 
       - name: Determine release tag
@@ -138,25 +106,17 @@ jobs:
           echo "tag_name=$tag" >> $env:GITHUB_OUTPUT
         shell: powershell
 
-      # ======== ЗАГРУЗКА ВСЕХ ФАЙЛОВ ========
-      - name: Upload ALL assets to release
+      # ======== ЗАГРУЗКА ФАЙЛОВ В РЕЛИЗ ========
+      - name: Upload assets to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release-tag.outputs.tag_name }}
           files: |
-            # Оригинальные файлы
             builds/patched/app.asar
             builds/patched/app.asar.gz
             builds/patched/app.asar.zst
             builds/patched/app.asar.unpacked.zip
-            
-            # Полная версия (без DevTools)
-            builds/patched/app_full.asar
-            builds/patched/app_full.asar.gz
-            builds/patched/app_full.asar.zst
-            
-            # DevTools версия
-            builds/patched/app_devtools.asar
-            builds/patched/app_devtools.asar.gz
+            builds/patched/appDevTools.asar
+            builds/patched/appDevTools.asar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
