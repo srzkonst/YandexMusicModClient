@@ -54,18 +54,23 @@ jobs:
       - name: Create app.asar (no DevTools)
         run: |
           $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
-          # Извлекаем и собираем без патчей
+          # Извлекаем в отдельную папку
           node toolset.js extract --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
-          node toolset.js build -r --dest="builds\patched\app.asar"
+          # Переименовываем папку extracted
+          Rename-Item -Path "extracted" -NewName "extracted_no_devtools"
+          # Собираем из этой папки
+          node toolset.js build --src="extracted_no_devtools" --dest="builds\patched\app.asar"
         shell: powershell
 
       # ======== СОЗДАНИЕ APPDEVTOOLS.ASAR (с DevTools) ========
       - name: Create appDevTools.asar (with DevTools)
         run: |
           $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
-          # Извлекаем, патчим, собираем
+          # Извлекаем заново в другую папку
           node toolset.js extract --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
+          # Патчим
           node toolset.js patch
+          # Собираем
           node toolset.js build --dest="builds\patched\appDevTools.asar"
         shell: powershell
 
