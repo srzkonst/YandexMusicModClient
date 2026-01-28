@@ -171,7 +171,7 @@ const MiniPlayer = miniPlayer_js_1.getMiniPlayer();
   const updater = (0, updater_js_1.getUpdater)();
   const modUpdater = (0, modUpdater_js_1.getModUpdater)();
   const ffmpegInstaller = getFfmpegUpdater({
-    repo: "TheKing-OfTime/YandexMusicModClient",
+    repo: "srzkonst/YandexMusicModClient",
     tagName: "ffmpeg-binaries",
   });
   await electron_1.app.whenReady();

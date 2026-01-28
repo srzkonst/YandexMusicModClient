@@ -360,8 +360,7 @@ function buildActivityObject(playingState) {
     state: string2Discord(artist),
     stateUrl: shareArtistPath.toWeb(),
     largeImageKey: albumArt,
-    largeImageText: `YandexMusicModClient ${config_js_1.config.modification.version}`,
-    largeImageUrl: GITHUB_LINK,
+    // Убрали largeImageText и largeImageUrl отсюда
     startTimestamp,
     endTimestamp,
     instance: false,
@@ -372,6 +371,7 @@ function buildActivityObject(playingState) {
     activityObject.smallImageText = stateText;
   }
 
+  // Добавляем largeImageText и largeImageUrl только если есть альбом
   if ((settings()?.showAlbum ?? true) && album) {
     activityObject.largeImageText = string2Discord(album);
     activityObject.largeImageUrl = shareAlbumPath.toWeb();

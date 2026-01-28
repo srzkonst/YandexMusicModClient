@@ -50,18 +50,56 @@ jobs:
         run: 7z x 'YandexMusicExtracted\$PLUGINSDIR\app-64.7z' -oApp64Extracted -y
         shell: powershell
 
-      - name: Run toolset.js on app.asar
+      # ======== СОХРАНЕНИЕ ОРИГИНАЛЬНЫХ ФАЙЛОВ ========
+      - name: Copy original app.asar (from EXE)
+        run: |
+          # Создаём папку если нет
+          New-Item -ItemType Directory -Force -Path "builds\patched"
+          # Копируем оригинальный app.asar
+          Copy-Item -Path "${{ github.workspace }}\App64Extracted\resources\app.asar" -Destination "builds\patched\app.asar"
+        shell: powershell
+
+      - name: Create app.asar.unpacked.zip
+        run: |
+          $unpackedPath = "${{ github.workspace }}\App64Extracted\resources\app.asar.unpacked"
+          if (Test-Path $unpackedPath) {
+            7z a -tzip "builds\patched\app.asar.unpacked.zip" "$unpackedPath\*"
+          }
+        shell: powershell
+
+      # ======== ПАТЧИНГ ========
+      - name: Run toolset.js on app.asar to create devtools version
         run: |
           $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
           node toolset.js extract -bp --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
+          
+          # Копируем созданный патченный файл с новым именем
+          $patchedAsar = Get-ChildItem "builds" -Filter "app.asar" -Recurse | Where-Object { $_.DirectoryName -like "*patched*" } | Select-Object -First 1
+          if ($patchedAsar) {
+            Copy-Item -Path $patchedAsar.FullName -Destination "builds\patched\appDevTools.asar"
+          } else {
+            Write-Error "Patched app.asar not found!"
+          }
         shell: powershell
 
-      - name: Rename app.asar to appDevTools.asar
-        run: Rename-Item -Path "builds\patched\app.asar" -NewName "appDevTools.asar"
+      # ======== СЖАТИЕ ФАЙЛОВ ========
+      - name: Install zstd
+        run: choco install zstandard -y
         shell: powershell
 
-      - name: Gzip appDevTools.asar using 7-Zip
-        run: 7z a -tgzip "builds\patched\appDevTools.asar.gz" "builds\patched\appDevTools.asar"
+      - name: Gzip all asar files
+        run: |
+          # Сжимаем оригинальный app.asar
+          7z a -tgzip "builds\patched\app.asar.gz" "builds\patched\app.asar"
+          
+          # Сжимаем appDevTools.asar
+          7z a -tgzip "builds\patched\appDevTools.asar.gz" "builds\patched\appDevTools.asar"
+        shell: powershell
+
+      - name: Create zstd compressed files
+        run: |
+          # Создаём .zst версию оригинального asar
+          zstd -11 "builds\patched\app.asar" -o "builds\patched\app.asar.zst"
         shell: powershell
 
       - name: Determine release tag
@@ -77,11 +115,16 @@ jobs:
           echo "tag_name=$tag" >> $env:GITHUB_OUTPUT
         shell: powershell
 
-      - name: Upload appDevTools.asar and .gz to release
+      # ======== ЗАГРУЗКА ВСЕХ ФАЙЛОВ ========
+      - name: Upload ALL assets to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release-tag.outputs.tag_name }}
           files: |
+            builds/patched/app.asar
+            builds/patched/app.asar.gz
+            builds/patched/app.asar.zst
+            builds/patched/app.asar.unpacked.zip
             builds/patched/appDevTools.asar
             builds/patched/appDevTools.asar.gz
         env:
