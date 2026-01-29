@@ -67,7 +67,7 @@ jobs:
         run: |
           $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
           node toolset.js extract --src="$asarPath" --withoutPure --extractType="customAsar"
-          node toolset.js build -r --lastExtracted
+          node toolset.js build --lastExtracted
         shell: powershell
 
       - name: Copy built app.asar to staging directory
