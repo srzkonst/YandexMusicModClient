@@ -1,4 +1,4 @@
-name: Patch and Upload Yandex Music app.asar
+name: Build and Upload Patched Yandex Music ASAR
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     types: [published]
 
 jobs:
-  patch-asar:
+  build-asar:
     runs-on: windows-latest
 
     steps:
@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '18'
 
       - name: Install dependencies
         run: npm install
@@ -50,7 +50,36 @@ jobs:
         run: 7z x 'YandexMusicExtracted\$PLUGINSDIR\app-64.7z' -oApp64Extracted -y
         shell: powershell
 
-      # ======== ОПРЕДЕЛЕНИЕ ТЕГА ========
+      # Шаг 1: Создаем оригинальный пропатченный app.asar (без devtools)
+      - name: Build patched app.asar (original)
+        run: |
+          $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
+          node toolset.js extract --src="$asarPath" --withoutPure --extractType="customAsar"
+          node toolset.js build -r --lastExtracted
+        shell: powershell
+
+      - name: Copy built app.asar to staging directory
+        run: |
+          New-Item -ItemType Directory -Force -Path "staging"
+          Copy-Item -Path "builds\latest\app.asar" -Destination "staging\app.asar" -Force
+        shell: powershell
+
+      # Шаг 2: Создаем app.asar с devtools
+      - name: Create app.asar with devtools
+        run: |
+          $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
+          node toolset.js extract -bp --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
+          Move-Item -Path "builds\patched\app.asar" -Destination "staging\appDevTools.asar" -Force
+        shell: powershell
+
+      # Шаг 3: Подготавливаем версию с devtools для загрузки
+      - name: Prepare devtools version for upload
+        run: |
+          cd staging
+          7z a -tgzip "appDevTools.asar.gz" "appDevTools.asar"
+        shell: powershell
+
+      # Шаг 4: Определяем тег релиза
       - name: Determine release tag
         id: release-tag
         run: |
@@ -64,78 +93,62 @@ jobs:
           echo "tag_name=$tag" >> $env:GITHUB_OUTPUT
         shell: powershell
 
-      # ======== ПОДГОТОВКА ПАПКИ ========
-      - name: Prepare output directory
-        run: New-Item -ItemType Directory -Force -Path "builds\patched"
-        shell: powershell
-
-      # ======== СОХРАНЕНИЕ UNPACKED ========
-      - name: Save unpacked files
-        run: |
-          $unpackedPath = "${{ github.workspace }}\App64Extracted\resources\app.asar.unpacked"
-          if (Test-Path $unpackedPath) {
-            7z a -tzip "builds\patched\app.asar.unpacked.zip" "$unpackedPath\*"
-          }
-        shell: powershell
-
-      # ======== ШАГ 1: СОЗДАНИЕ APP.ASAR (без DevTools) ========
-      - name: Create app.asar (no DevTools)
-        run: |
-          $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
-          # Извлекаем
-          node toolset.js extract --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
-          # Собираем БЕЗ патчей
-          node toolset.js build -r --dest="builds\patched\app.asar"
-        shell: powershell
-
-      # ======== ШАГ 2: СОЗДАНИЕ СЖАТЫХ ВЕРСИЙ APP.ASAR ========
-      - name: Install zstd and compress app.asar
-        run: |
-          choco install zstandard -y
-          # app.asar.gz
-          7z a -tgzip "builds\patched\app.asar.gz" "builds\patched\app.asar"
-          # app.asar.zst
-          zstd -11 "builds\patched\app.asar" -o "builds\patched\app.asar.zst"
-        shell: powershell
-
-      # ======== ШАГ 3: ЗАГРУЗКА APP.ASAR ФАЙЛОВ ========
-      - name: Upload app.asar files
+      # Шаг 5: Загружаем все файлы в релиз
+      - name: Upload all files to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release-tag.outputs.tag_name }}
           files: |
-            builds/patched/app.asar
-            builds/patched/app.asar.gz
-            builds/patched/app.asar.zst
-            builds/patched/app.asar.unpacked.zip
+            staging/app.asar
+            staging/appDevTools.asar
+            staging/appDevTools.asar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-      # ======== ШАГ 4: СОЗДАНИЕ APPDEVTOOLS.ASAR ========
-      - name: Create appDevTools.asar (with DevTools)
-        run: |
-          $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
-          # Извлекаем ЗАНОВО (важно!)
-          node toolset.js extract --withoutPure --noNativeModules --extractType="customAsar" --src="$asarPath"
-          # Патчим для DevTools
-          node toolset.js patch
-          # Собираем с патчами
-          node toolset.js build --dest="builds\patched\appDevTools.asar"
-        shell: powershell
+      # Шаг 6: Дополнительное сжатие для Linux (app.asar.gz и app.asar.zst)
+      - name: Upload to ubuntu runner for additional compression
+        uses: actions/upload-artifact@v4
+        with:
+          name: asar-files
+          path: staging/app.asar
+          retention-days: 1
 
-      # ======== ШАГ 5: СОЗДАНИЕ APPDEVTOOLS.ASAR.GZ ========
-      - name: Compress appDevTools.asar
-        run: |
-          7z a -tgzip "builds\patched\appDevTools.asar.gz" "builds\patched\appDevTools.asar"
-        shell: powershell
+  compress-asar:
+    runs-on: ubuntu-latest
+    needs: build-asar
+    if: always()
 
-      # ======== ШАГ 6: ЗАГРУЗКА APPDEVTOOLS ФАЙЛОВ ========
-      - name: Upload appDevTools files
+    steps:
+      - name: Download asar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: asar-files
+          path: .
+
+      - name: Install compression tools
+        run: sudo apt-get update && sudo apt-get install -y gzip zstd
+
+      - name: Compress app.asar with gzip and zstd
+        run: |
+          gzip -k -9 app.asar
+          zstd -11 -k app.asar
+
+      - name: Determine release tag
+        id: get_release
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "TAG=${{ github.event.release.tag_name }}" >> $GITHUB_ENV
+          else
+            LATEST_TAG=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name')
+            echo "TAG=$LATEST_TAG" >> $GITHUB_ENV
+          fi
+
+      - name: Upload compressed files to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release-tag.outputs.tag_name }}
+          tag_name: ${{ env.TAG }}
           files: |
-            builds/patched/appDevTools.asar
-            builds/patched/appDevTools.asar.gz
+            app.asar.gz
+            app.asar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
