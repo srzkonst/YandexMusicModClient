@@ -50,7 +50,19 @@ jobs:
         run: 7z x 'YandexMusicExtracted\$PLUGINSDIR\app-64.7z' -oApp64Extracted -y
         shell: powershell
 
-      # Шаг 1: Создаем оригинальный пропатченный app.asar (без devtools)
+      # Шаг 0: Создаем фиктивный app.asar для обхода проверки версии
+      - name: Create dummy Yandex Music installation
+        run: |
+          # Создаем директорию где Yandex Music должен быть установлен
+          $ymPath = "C:\Users\runneradmin\AppData\Local\Programs\YandexMusic\resources"
+          New-Item -ItemType Directory -Force -Path $ymPath
+          
+          # Копируем оригинальный app.asar в этот путь
+          Copy-Item -Path "App64Extracted\resources\app.asar" -Destination "$ymPath\app.asar" -Force
+          echo "Created dummy Yandex Music installation at $ymPath\app.asar"
+        shell: powershell
+
+      # Шаг 1: Создаем оригинальный пропатченный app.asar
       - name: Build patched app.asar (original)
         run: |
           $asarPath = "${{ github.workspace }}\App64Extracted\resources\app.asar"
@@ -72,7 +84,7 @@ jobs:
           Move-Item -Path "builds\patched\app.asar" -Destination "staging\appDevTools.asar" -Force
         shell: powershell
 
-      # Шаг 3: Подготавливаем версию с devtools для загрузки
+      # Шаг 3: Сжимаем devtools версию
       - name: Prepare devtools version for upload
         run: |
           cd staging
@@ -93,8 +105,8 @@ jobs:
           echo "tag_name=$tag" >> $env:GITHUB_OUTPUT
         shell: powershell
 
-      # Шаг 5: Загружаем все файлы в релиз
-      - name: Upload all files to release
+      # Шаг 5: Загружаем файлы в релиз
+      - name: Upload files to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release-tag.outputs.tag_name }}
@@ -105,8 +117,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-      # Шаг 6: Дополнительное сжатие для Linux (app.asar.gz и app.asar.zst)
-      - name: Upload to ubuntu runner for additional compression
+      # Шаг 6: Загружаем app.asar для сжатия на Ubuntu
+      - name: Upload app.asar for compression
         uses: actions/upload-artifact@v4
         with:
           name: asar-files
